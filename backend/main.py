@@ -7,9 +7,11 @@ FastAPI 后端主文件
 import json
 import asyncio
 import uuid
+import os
 from typing import List, Dict, Any
 from datetime import datetime
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Cookie
 from fastapi.middleware.cors import CORSMiddleware
@@ -135,8 +137,16 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 @app.websocket("/ws/chat")
-async def websocket_chat(websocket: WebSocket):
+async def websocket_chat(websocket: WebSocket, session_token: str = Cookie(None)):
     """WebSocket聊天接口"""
+    # 获取用户信息（可选）
+    user_info = None
+    if session_token:
+        try:
+            user_info = await chat_db.verify_session(session_token)
+        except:
+            pass  # 允许匿名用户使用
+    
     session_id = await manager.connect(websocket)
     
     try:
@@ -175,6 +185,7 @@ async def websocket_chat(websocket: WebSocket):
                     
                     # 获取当前连接的聊天历史
                     current_session_id = manager.get_session_id(websocket)
+                    user_id = user_info['id'] if user_info and user_info.get('success') else None
                     history = await chat_db.get_chat_history(session_id=current_session_id, limit=10) # 限制最近10条
 
                     # 流式处理并推送AI响应
@@ -255,7 +266,8 @@ async def websocket_chat(websocket: WebSocket):
                                 mcp_tools_called=conversation_data["mcp_tools_called"],
                                 mcp_results=conversation_data["mcp_results"],
                                 ai_response=ai_response,
-                                session_id=current_session_id
+                                session_id=current_session_id,
+                                user_id=user_id
                             )
                             if success:
                                 print(f"✅ 对话记录保存成功")
@@ -299,10 +311,7 @@ async def websocket_chat(websocket: WebSocket):
 
 # ─────────── REST API 接口 ───────────
 
-@app.get("/")
-async def root():
-    """根路径重定向到前端"""
-    return {"message": "MCP Web智能助手API", "version": "1.0.0"}
+# 根路径由静态文件服务处理
 
 @app.get("/api/tools")
 async def get_tools():
@@ -539,8 +548,28 @@ async def logout_user(session_token: str = Cookie(None)):
         print(f"❌ 用户登出失败: {e}")
         raise HTTPException(status_code=500, detail="登出失败")
 
-@app.get("/api/auth/me")
+# 依赖函数
 async def get_current_user(session_token: str = Cookie(None)):
+    """获取当前用户信息"""
+    if not session_token:
+        return None
+    
+    user_info = await chat_db.verify_session(session_token)
+    return user_info
+
+async def get_optional_user(session_token: str = Cookie(None)):
+    """获取可选的用户信息（允许匿名访问）"""
+    if not session_token:
+        return None
+    
+    try:
+        user_info = await chat_db.verify_session(session_token)
+        return user_info
+    except:
+        return None
+
+@app.get("/api/auth/me")
+async def get_current_user_info(session_token: str = Cookie(None)):
     """获取当前用户信息"""
     try:
         if not chat_db:
@@ -566,17 +595,43 @@ async def get_current_user(session_token: str = Cookie(None)):
         print(f"❌ 获取用户信息失败: {e}")
         raise HTTPException(status_code=500, detail="获取用户信息失败")
 
+# ─────────── 聊天会话管理API ───────────
+
+@app.get("/api/chat/history/{session_id}")
+async def get_chat_history_api(session_id: str, current_user = Depends(get_optional_user)):
+    """获取聊天历史"""
+    try:
+        # 这里需要实现获取聊天历史的逻辑
+        # 暂时返回空列表
+        return {"status": "success", "data": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/sessions")
+async def get_chat_sessions(current_user = Depends(get_optional_user)):
+    """获取用户的聊天会话列表"""
+    try:
+        # 这里需要实现获取会话列表的逻辑
+        # 暂时返回空列表
+        return {"status": "success", "data": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ─────────── 静态文件服务（可选） ───────────
 
 # 如果要让FastAPI直接服务前端文件，取消下面的注释
-# app.mount("/static", StaticFiles(directory="../frontend"), name="static")
+# 获取项目根目录
+project_root = Path(__file__).parent.parent
+frontend_dir = project_root / "frontend"
+
+app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="static")
 
 if __name__ == "__main__":
     # 开发环境启动
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8002,
+        port=8000,
         reload=True,
         log_level="info"
     )

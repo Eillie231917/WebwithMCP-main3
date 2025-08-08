@@ -293,14 +293,14 @@ class ChatDatabase:
             print(f"❌ 注销会话失败: {e}")
             return False
     
-    async def start_conversation(self, session_id: str = "default") -> int:
+    async def start_conversation(self, session_id: str = "default", user_id: int = None) -> int:
         """开始新的对话，返回conversation_id"""
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 # 确保session存在
                 await db.execute("""
-                    INSERT OR IGNORE INTO chat_sessions (session_id) VALUES (?)
-                """, (session_id,))
+                    INSERT OR IGNORE INTO chat_sessions (session_id, user_id) VALUES (?, ?)
+                """, (session_id, user_id))
                 
                 # 获取下一个conversation_id
                 cursor = await db.execute("""

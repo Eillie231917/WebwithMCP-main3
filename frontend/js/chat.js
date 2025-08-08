@@ -563,6 +563,70 @@ class ChatApp {
         this.loadingOverlay.style.display = 'none';
     }
     
+    // 初始化用户状态
+    async initUserStatus() {
+        try {
+            const authManager = new AuthManager();
+            const isLoggedIn = await authManager.checkLoginStatus();
+            
+            if (isLoggedIn) {
+                const userInfo = await authManager.getCurrentUser();
+                this.updateUserDisplay(userInfo);
+            } else {
+                this.showGuestDisplay();
+            }
+        } catch (error) {
+            console.error('初始化用户状态失败:', error);
+            this.showGuestDisplay();
+        }
+    }
+    
+    // 更新用户显示
+    updateUserDisplay(userInfo) {
+        if (this.guestSection) {
+            this.guestSection.style.display = 'none';
+        }
+        if (this.userInfo) {
+            this.userInfo.style.display = 'flex';
+        }
+        if (this.userName) {
+            this.userName.textContent = userInfo.username;
+        }
+        if (this.userAvatar) {
+            const authManager = new AuthManager();
+            this.userAvatar.innerHTML = authManager.createUserAvatar(userInfo.username);
+        }
+    }
+    
+    // 显示访客状态
+    showGuestDisplay() {
+        if (this.guestSection) {
+            this.guestSection.style.display = 'flex';
+        }
+        if (this.userInfo) {
+            this.userInfo.style.display = 'none';
+        }
+    }
+    
+    // 处理登出
+    async handleLogout() {
+        try {
+            const authManager = new AuthManager();
+            await authManager.logout();
+            this.showGuestDisplay();
+            
+            // 清空当前聊天
+            this.clearChat();
+            
+            // 显示登出成功消息
+            authManager.showMessage('已成功登出', 'success');
+        } catch (error) {
+            console.error('登出失败:', error);
+            const authManager = new AuthManager();
+            authManager.showMessage('登出失败，请重试', 'error');
+        }
+    }
+    
     escapeHtml(text) {
         if (text === null || text === undefined) {
             return '';
