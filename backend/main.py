@@ -11,14 +11,25 @@ from typing import List, Dict, Any
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Cookie
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 import uvicorn
 
 from mcp_agent import WebMCPAgent
 from database import ChatDatabase
+
+# ==================== 数据模型 ====================
+class UserRegister(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
 
 # 全局变量
 mcp_agent = None
@@ -430,6 +441,130 @@ async def get_shared_chat(session_id: str, limit: int = 100):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取分享聊天记录失败: {str(e)}")
+
+# ==================== 用户认证API ====================
+
+@app.post("/api/auth/register")
+async def register_user(user_data: UserRegister):
+    """用户注册"""
+    try:
+        if not chat_db:
+            raise HTTPException(status_code=500, detail="数据库未初始化")
+        
+        # 基本验证
+        if len(user_data.username) < 3:
+            raise HTTPException(status_code=400, detail="用户名至少3个字符")
+        
+        if len(user_data.password) < 6:
+            raise HTTPException(status_code=400, detail="密码至少6个字符")
+        
+        if "@" not in user_data.email:
+            raise HTTPException(status_code=400, detail="邮箱格式不正确")
+        
+        # 创建用户
+        result = await chat_db.create_user(
+            username=user_data.username,
+            email=user_data.email,
+            password=user_data.password
+        )
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["message"])
+        
+        return {
+            "success": True,
+            "message": "注册成功",
+            "user_id": result["user_id"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ 用户注册失败: {e}")
+        raise HTTPException(status_code=500, detail="注册失败")
+
+@app.post("/api/auth/login")
+async def login_user(user_data: UserLogin):
+    """用户登录"""
+    try:
+        if not chat_db:
+            raise HTTPException(status_code=500, detail="数据库未初始化")
+        
+        # 验证用户
+        result = await chat_db.verify_user(
+            username=user_data.username,
+            password=user_data.password
+        )
+        
+        if not result["success"]:
+            raise HTTPException(status_code=401, detail=result["message"])
+        
+        # 创建会话
+        session_token = await chat_db.create_session(result["user"]["id"])
+        
+        if not session_token:
+            raise HTTPException(status_code=500, detail="创建会话失败")
+        
+        response = {
+            "success": True,
+            "message": "登录成功",
+            "user": result["user"],
+            "session_token": session_token
+        }
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ 用户登录失败: {e}")
+        raise HTTPException(status_code=500, detail="登录失败")
+
+@app.post("/api/auth/logout")
+async def logout_user(session_token: str = Cookie(None)):
+    """用户登出"""
+    try:
+        if not chat_db:
+            raise HTTPException(status_code=500, detail="数据库未初始化")
+        
+        if session_token:
+            await chat_db.logout_session(session_token)
+        
+        return {
+            "success": True,
+            "message": "登出成功"
+        }
+        
+    except Exception as e:
+        print(f"❌ 用户登出失败: {e}")
+        raise HTTPException(status_code=500, detail="登出失败")
+
+@app.get("/api/auth/me")
+async def get_current_user(session_token: str = Cookie(None)):
+    """获取当前用户信息"""
+    try:
+        if not chat_db:
+            raise HTTPException(status_code=500, detail="数据库未初始化")
+        
+        if not session_token:
+            raise HTTPException(status_code=401, detail="未登录")
+        
+        # 验证会话
+        result = await chat_db.verify_session(session_token)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=401, detail=result["message"])
+        
+        return {
+            "success": True,
+            "user": result["user"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ 获取用户信息失败: {e}")
+        raise HTTPException(status_code=500, detail="获取用户信息失败")
 
 # ─────────── 静态文件服务（可选） ───────────
 

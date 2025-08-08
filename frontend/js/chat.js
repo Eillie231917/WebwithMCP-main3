@@ -17,6 +17,14 @@ class ChatApp {
         this.charCount = document.getElementById('charCount');
         this.loadingOverlay = document.getElementById('loadingOverlay');
         
+        // 用户相关DOM元素
+        this.userSection = document.getElementById('userSection');
+        this.guestSection = document.getElementById('guestSection');
+        this.userInfo = document.getElementById('userInfo');
+        this.userAvatar = document.getElementById('userAvatar');
+        this.userName = document.getElementById('userName');
+        this.logoutBtn = document.getElementById('logoutBtn');
+        
         this.init();
     }
     
@@ -28,6 +36,9 @@ class ChatApp {
             if (!window.configManager.isLoaded) {
                 await window.configManager.loadConfig();
             }
+            
+            // 初始化用户状态
+            await this.initUserStatus();
             
             // 配置加载成功后再初始化其他组件
             this.setupEventListeners();
@@ -73,6 +84,14 @@ class ChatApp {
         
         // 初始化分享模块
         this.shareModule = new ShareModule(this);
+        
+        // 登出按钮事件
+        if (this.logoutBtn) {
+            this.logoutBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                await this.handleLogout();
+            });
+        }
         
         // 页面卸载时关闭连接
         window.addEventListener('beforeunload', () => {

@@ -6,9 +6,11 @@ SQLite数据库管理
 
 import os
 import json
+import hashlib
+import secrets
 import aiosqlite
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -32,13 +34,41 @@ class ChatDatabase:
         """初始化数据库表结构"""
         try:
             async with aiosqlite.connect(self.db_path) as db:
+                # 创建用户表
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT UNIQUE NOT NULL,
+                        email TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        salt TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        is_active BOOLEAN DEFAULT 1
+                    )
+                """)
+                
+                # 创建用户会话表
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS user_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        session_token TEXT UNIQUE NOT NULL,
+                        expires_at TIMESTAMP NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(id)
+                    )
+                """)
+                
                 # 创建聊天会话表
                 await db.execute("""
                     CREATE TABLE IF NOT EXISTS chat_sessions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         session_id TEXT NOT NULL,
+                        user_id INTEGER,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(id)
                     )
                 """)
                 
@@ -70,6 +100,21 @@ class ChatDatabase:
                 
                 # 创建索引以提高查询性能
                 await db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_users_username 
+                    ON users(username)
+                """)
+                
+                await db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_users_email 
+                    ON users(email)
+                """)
+                
+                await db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_user_sessions_token 
+                    ON user_sessions(session_token)
+                """)
+                
+                await db.execute("""
                     CREATE INDEX IF NOT EXISTS idx_chat_records_session 
                     ON chat_records(session_id)
                 """)
@@ -90,6 +135,162 @@ class ChatDatabase:
                 
         except Exception as e:
             print(f"❌ 数据库初始化失败: {e}")
+            return False
+    
+    # ==================== 用户认证相关方法 ====================
+    
+    def _hash_password(self, password: str, salt: str = None) -> tuple:
+        """密码哈希处理"""
+        if salt is None:
+            salt = secrets.token_hex(32)
+        password_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
+        return password_hash.hex(), salt
+    
+    async def create_user(self, username: str, email: str, password: str) -> Dict[str, Any]:
+        """创建新用户"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # 检查用户名和邮箱是否已存在
+                cursor = await db.execute(
+                    "SELECT id FROM users WHERE username = ? OR email = ?", 
+                    (username, email)
+                )
+                existing_user = await cursor.fetchone()
+                
+                if existing_user:
+                    return {"success": False, "message": "用户名或邮箱已存在"}
+                
+                # 创建密码哈希
+                password_hash, salt = self._hash_password(password)
+                
+                # 插入新用户
+                cursor = await db.execute("""
+                    INSERT INTO users (username, email, password_hash, salt)
+                    VALUES (?, ?, ?, ?)
+                """, (username, email, password_hash, salt))
+                
+                user_id = cursor.lastrowid
+                await db.commit()
+                
+                return {
+                    "success": True, 
+                    "message": "用户创建成功",
+                    "user_id": user_id
+                }
+                
+        except Exception as e:
+            print(f"❌ 创建用户失败: {e}")
+            return {"success": False, "message": "创建用户失败"}
+    
+    async def verify_user(self, username: str, password: str) -> Dict[str, Any]:
+        """验证用户登录"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute("""
+                    SELECT id, username, email, password_hash, salt, is_active
+                    FROM users WHERE username = ? OR email = ?
+                """, (username, username))
+                
+                user = await cursor.fetchone()
+                
+                if not user:
+                    return {"success": False, "message": "用户不存在"}
+                
+                user_id, username, email, stored_hash, salt, is_active = user
+                
+                if not is_active:
+                    return {"success": False, "message": "账户已被禁用"}
+                
+                # 验证密码
+                password_hash, _ = self._hash_password(password, salt)
+                
+                if password_hash != stored_hash:
+                    return {"success": False, "message": "密码错误"}
+                
+                return {
+                    "success": True,
+                    "message": "登录成功",
+                    "user": {
+                        "id": user_id,
+                        "username": username,
+                        "email": email
+                    }
+                }
+                
+        except Exception as e:
+            print(f"❌ 用户验证失败: {e}")
+            return {"success": False, "message": "登录失败"}
+    
+    async def create_session(self, user_id: int) -> str:
+        """创建用户会话"""
+        try:
+            session_token = secrets.token_urlsafe(32)
+            expires_at = datetime.now() + timedelta(days=7)  # 7天过期
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute("""
+                    INSERT INTO user_sessions (user_id, session_token, expires_at)
+                    VALUES (?, ?, ?)
+                """, (user_id, session_token, expires_at))
+                
+                await db.commit()
+                return session_token
+                
+        except Exception as e:
+            print(f"❌ 创建会话失败: {e}")
+            return None
+    
+    async def verify_session(self, session_token: str) -> Dict[str, Any]:
+        """验证会话token"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute("""
+                    SELECT us.user_id, us.expires_at, u.username, u.email, u.is_active
+                    FROM user_sessions us
+                    JOIN users u ON us.user_id = u.id
+                    WHERE us.session_token = ?
+                """, (session_token,))
+                
+                session = await cursor.fetchone()
+                
+                if not session:
+                    return {"success": False, "message": "会话不存在"}
+                
+                user_id, expires_at, username, email, is_active = session
+                
+                # 检查会话是否过期
+                if datetime.fromisoformat(expires_at) < datetime.now():
+                    # 删除过期会话
+                    await db.execute("DELETE FROM user_sessions WHERE session_token = ?", (session_token,))
+                    await db.commit()
+                    return {"success": False, "message": "会话已过期"}
+                
+                if not is_active:
+                    return {"success": False, "message": "账户已被禁用"}
+                
+                return {
+                    "success": True,
+                    "user": {
+                        "id": user_id,
+                        "username": username,
+                        "email": email
+                    }
+                }
+                
+        except Exception as e:
+            print(f"❌ 会话验证失败: {e}")
+            return {"success": False, "message": "会话验证失败"}
+    
+    async def logout_session(self, session_token: str) -> bool:
+        """注销会话"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute("DELETE FROM user_sessions WHERE session_token = ?", (session_token,))
+                await db.commit()
+                return True
+                
+        except Exception as e:
+            print(f"❌ 注销会话失败: {e}")
             return False
     
     async def start_conversation(self, session_id: str = "default") -> int:

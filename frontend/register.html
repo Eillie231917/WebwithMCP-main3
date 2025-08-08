@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - MCP Web 智能助手</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/auth.css">
+    <script src="js/config.js"></script>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1 class="auth-title">🤖 MCP Web 智能助手</h1>
+                <p class="auth-subtitle">创建新账户</p>
+            </div>
+            
+            <form id="registerForm" class="auth-form">
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" name="username" required 
+                           placeholder="请输入用户名（至少3个字符）"
+                           minlength="3">
+                    <div class="form-hint">用户名将用于登录，至少3个字符</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="email">邮箱</label>
+                    <input type="email" id="email" name="email" required 
+                           placeholder="请输入邮箱地址">
+                    <div class="form-hint">邮箱也可用于登录</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" name="password" required 
+                           placeholder="请输入密码（至少6个字符）"
+                           minlength="6">
+                    <div class="form-hint">密码至少6个字符</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="confirmPassword">确认密码</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" required 
+                           placeholder="请再次输入密码">
+                </div>
+                
+                <button type="submit" class="btn btn-primary btn-full" id="registerBtn">
+                    <span class="btn-text">注册</span>
+                    <span class="btn-loading" style="display: none;">注册中...</span>
+                </button>
+            </form>
+            
+            <div class="auth-footer">
+                <p>已有账户？ <a href="login.html" class="auth-link">立即登录</a></p>
+                <p><a href="index.html" class="auth-link">返回首页</a></p>
+            </div>
+            
+            <!-- 错误提示 -->
+            <div id="errorMessage" class="error-message" style="display: none;"></div>
+            
+            <!-- 成功提示 -->
+            <div id="successMessage" class="success-message" style="display: none;"></div>
+        </div>
+    </div>
+    
+    <script src="js/auth.js"></script>
+    <script>
+        // 初始化注册页面
+        document.addEventListener('DOMContentLoaded', function() {
+            const authManager = new AuthManager();
+            
+            // 检查是否已登录
+            authManager.checkLoginStatus().then(isLoggedIn => {
+                if (isLoggedIn) {
+                    window.location.href = 'index.html';
+                }
+            });
+            
+            // 处理注册表单提交
+            document.getElementById('registerForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const username = document.getElementById('username').value.trim();
+                const email = document.getElementById('email').value.trim();
+                const password = document.getElementById('password').value;
+                const confirmPassword = document.getElementById('confirmPassword').value;
+                
+                // 基本验证
+                if (!username || !email || !password || !confirmPassword) {
+                    authManager.showError('请填写所有字段');
+                    return;
+                }
+                
+                if (username.length < 3) {
+                    authManager.showError('用户名至少3个字符');
+                    return;
+                }
+                
+                if (password.length < 6) {
+                    authManager.showError('密码至少6个字符');
+                    return;
+                }
+                
+                if (password !== confirmPassword) {
+                    authManager.showError('两次输入的密码不一致');
+                    return;
+                }
+                
+                if (!email.includes('@')) {
+                    authManager.showError('请输入有效的邮箱地址');
+                    return;
+                }
+                
+                const registerBtn = document.getElementById('registerBtn');
+                const btnText = registerBtn.querySelector('.btn-text');
+                const btnLoading = registerBtn.querySelector('.btn-loading');
+                
+                // 显示加载状态
+                registerBtn.disabled = true;
+                btnText.style.display = 'none';
+                btnLoading.style.display = 'inline';
+                
+                try {
+                    const result = await authManager.register(username, email, password);
+                    
+                    if (result.success) {
+                        authManager.showSuccess('注册成功！正在跳转到登录页面...');
+                        setTimeout(() => {
+                            window.location.href = 'login.html';
+                        }, 2000);
+                    } else {
+                        authManager.showError(result.message || '注册失败');
+                    }
+                } catch (error) {
+                    authManager.showError('注册失败，请稍后重试');
+                } finally {
+                    // 恢复按钮状态
+                    registerBtn.disabled = false;
+                    btnText.style.display = 'inline';
+                    btnLoading.style.display = 'none';
+                }
+            });
+            
+            // 实时密码确认验证
+            document.getElementById('confirmPassword').addEventListener('input', function() {
+                const password = document.getElementById('password').value;
+                const confirmPassword = this.value;
+                
+                if (confirmPassword && password !== confirmPassword) {
+                    this.setCustomValidity('密码不一致');
+                } else {
+                    this.setCustomValidity('');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
